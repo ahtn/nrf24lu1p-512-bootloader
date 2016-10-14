@@ -4,6 +4,7 @@ import usb.util
 import time
 import bootloader
 import sys
+import intelhex
 
 ID_VENDOR = 0x1915
 ID_PRODUCT = 0x0101
@@ -57,7 +58,9 @@ if reattach:
 
 
 def print_cmd_sent(name, cmd):
-    print("cmd: {} \t raw_cmd: {}".format(name, cmd) )
+    # print("cmd: {} \t raw_cmd: {}".format(name, cmd) )
+    # print("cmd: {} \t raw_cmd: {}".format(name, cmd) )
+    pass
 
 def flash_erase_all():
     for i in range(32):
@@ -82,7 +85,7 @@ def read_usb_in():
 
 def print_usb_response():
     data = ep1in.read(64, 1000)
-    print(bytes_to_str(data))
+    # print(bytes_to_str(data))
     return data
 
 def bootloader_version():
@@ -108,32 +111,49 @@ def flash_select_half(half):
 def flash_write_page(page_num, page):
     usb_cmd(bootloader.CMD_WRITE_INIT, page_num)
 
-    for block in [page[i:i+64] for i in range(0, 512, 64)]:
+    for a,b in [(i,i+64) for i in range(0, 512, 64)]:
+        block = page[a:b]
+        if len(block) < 64:
+            block += bytes([0xff] * (64 - len(block)))
         ep1out.write(block)
         ep1in.read(64, 10000)
 
 def flash_print_all(size=16):
+    result = []
     flash_select_half(0)
     for i in range(256):
-        flash_read_block(i)
+        result += flash_read_block(i)
     if size == 32:
         flash_select_half(1)
         for i in range(256):
-            flash_read_block(i)
+            result += flash_read_block(i)
+    return result
+
+def hex_dump(data):
+    addr = 0
+    for block in [data[i:i+64] for i in range(0, len(data), 64)]:
+        print("{:04x}".format(addr), bytes_to_str(block))
+        addr += 64
 
 import sys
-test = int(sys.argv[1])
+# test = int(sys.argv[1])
+test = sys.argv[1]
 
-if test == 0:
-    flash_print_all()
-if test == 1:
+if test == "read_16":
+    data = flash_print_all(size=16)
+    hex_dump(data)
+elif test == "read_32":
+    data = flash_print_all(size=32)
+    hex_dump(data)
+
+elif test == "10":
     flash_select_half(0)
     flash_write_page(1, bytes([i%256 for i in range(512)]))
 
     flash_read_block(0)
     flash_read_block(8)
     flash_read_block(9)
-elif test == 2:
+elif test == "20":
     flash_select_half(0)
 
     flash_read_block(0)
@@ -146,7 +166,7 @@ elif test == 2:
     flash_read_block(8)
     flash_read_block(9)
 
-elif test == 3:
+elif test == "30":
     flash_read_block(0x00)
     flash_read_block(0x08)
     flash_read_block(0x10)
@@ -160,9 +180,45 @@ elif test == 3:
     flash_read_block(0x08)
     flash_read_block(0x10)
 
-elif test == 4:
+elif test == "write_hex":
+    flash_size = 0x8000
+    page_size = 0x0200
+    num_pages = flash_size // page_size
+
+    hexfile = intelhex.IntelHex()
+    hexfile.loadhex(sys.argv[2])
+    if hexfile.maxaddr() > flash_size:
+        raise "hexfile too large"
+
+    hexfile.padding = 0xff
+    data = hexfile.tobinarray(start=0x0000, end=flash_size)
+
+    for page_num in range(0, num_pages):
+        page_start = page_num * page_size
+        page_end = (page_num+1) * page_size
+        page_data = data[page_start:page_end]
+
+        is_empty_page = True
+        for b in page_data:
+            if b != 0xff:
+                is_empty_page = False
+                break
+        if is_empty_page:
+            continue
+
+        # print("{:x} {:x} {:x} {}".format(page_start, page_end, len(page_data), page_data))
+
+        flash_write_page(page_num, page_data)
+
+elif test == "zero_page_0":
+    flash_write_page(0, bytes([0]*512))
+
+elif test == "read_disable":
+    flash_read_disable()
+elif test == "6":
     pass
 
 # It may raise USBError if there's e.g. no kernel driver loaded at all
 if reattach:
+    print("reattach")
     dev.attach_kernel_driver(1)

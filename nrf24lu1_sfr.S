@@ -1,5 +1,19 @@
 .module sfr
 
+; values
+_RWD         = 0x00
+_WWD         = 0x08
+_RGTIMER     = 0x01
+_WGTIMER     = 0x09
+_RRTCLAT     = 0x02
+_WRTCLAT     = 0x0A
+_RRTC        = 0x03
+_WRTCDIS     = 0x0B
+_RWSTA0      = 0x04
+_WWCON0      = 0x0C
+_RWSTA1      = 0x05
+_WWCON1      = 0x0D
+
 .area PSEG (PAG,XDATA)
 
 ;--------------------------------------------------------
@@ -241,4 +255,3 @@
 
 ; info page addresses
 _rdismb = 0x0023
-

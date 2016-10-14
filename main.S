@@ -1,14 +1,14 @@
 ; USB bootloader for nrf24lu1+.  Attempts to match the protocol given in the
 ; NRF24LU1+ datasheet. Code is less than 512 bytes, so it fits in 1 page.
 ;
+; NOTE: always erase the given page on a flash write cmd, the nordic version
+;   only erases the page if it hasn't been erase already.
+;
 ; NOTE:
 ;   Does not handle hardware issuse with older chips (before ~2009).
 ; See PAN-011 for more info:
 ; https://www.nordicsemi.com/eng/nordic/download_resource/9405/1/65061627
 ;
-; NOTE:
-;   Could use acall/ajmp instead of lcall/ljmp to save 1 byte per instance,
-; but the sdcc linker crashed when I tried to get this to work.
 .module main
 
 .include "nrf24lu1_sfr.S"
@@ -16,6 +16,7 @@
 .include "config.S"
 
 ; bit register definitions
+BIT_REG_0_7 = 0x20
 BIT_SEND_USB_DATA = 0x00
 BIT_FLASH_HALF_SELECT = 0x01
 BIT_SEND_ZERO = 0x02
@@ -23,40 +24,69 @@ BIT_WRITE_BLOCK = 0x03
 
 ; address space definitions
 _BLOCK_SIZE             = 0x0200
-_BOOTLOADER_BLOCK_DEBUG = 0x0000
+; _BOOTLOADER_BLOCK_DEBUG = 0x7400
+; _BOOTLOADER_BLOCK_F16   = 0x3e00
 _BOOTLOADER_BLOCK_F16   = 0x3e00
 _BOOTLOADER_BLOCK_F32   = 0x7e00
 _XRAM                   = 0x8000
 
-; info page addresses
-_rdismb = 0x0023
+FLASH_SIZE_16 = 1
 
-.if FLASH_16
+BOOTLOADER_AT_START = 1
+RDIS_ENABLE = 0
+LONGER_DISCONNECT = 0
+KICK_WATCHDOG = 1
+DISABLE_VERSION_CMD = 0
+
+.if FLASH_SIZE_16
 _BOOTLOADER_BLOCK       = _BOOTLOADER_BLOCK_F16
 .else
 _BOOTLOADER_BLOCK       = _BOOTLOADER_BLOCK_F32
 .endif
 
+; _BOOTLOADER_BLOCK_DEBUG = 0x6a00
+
 ; Reset vector that jumps to bootloader
 .area HOME         (ABS, CODE)
 
+.if BOOTLOADER_AT_START
+_BOOTLOADER_BLOCK       = 0x0000
+.else
 .org 0x0000
 reset_vec:
     ljmp _BOOTLOADER_BLOCK
+.endif
 
 .org _BOOTLOADER_BLOCK
+
+_BLOCK_OFFSET = _BOOTLOADER_BLOCK % 0x800
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                 code that loads bootloader to xram                  ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 _main:
+.if BOOTLOADER_AT_START
+    ljmp _at_start_logitech_boot
+_at_start_logitech_boot:
+.endif
+
+    clr     _EA ; disable interrupts, incase we are not executing from reset
+    ; clr     a
+; 00001$:
+    ; mov     r0, a
+    ; mov     @r0, a
+    ; djnz    r0, 00001$
+    mov     _TICKDV, #0xff
+    mov	    _SP, #0x50
 
 ; copies the bootloader page into ram, and then begins execution
 ; at where _program_start is in xram
 _load_bootloader_into_xram:
-    clr     _EA ; disable interrupts, incase we are not executing from reset
 
-    mov     dptr, #_program_start ; dptr0 -> program code to be loaded
+.if KICK_WATCHDOG
+    acall   _kick_dog
+.endif
+    mov     dptr, #_BOOTLOADER_BLOCK ; dptr0 -> program code to be loaded
     inc     _DPS ; #0x01
     mov     dptr, #_XRAM          ; dptr1 -> xram where to store code
 
@@ -66,14 +96,12 @@ _load_bootloader_into_xram:
     acall   _copy_between_dptr   ; r7 == 0 => 256 bytes
 
     ; jump to ram and begin execution of code
-    ljmp    #_XRAM
+    ljmp    #(_XRAM + (_program_start - _BOOTLOADER_BLOCK))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;           start of program code that is loaded into xram            ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 _program_start:
-    clr a           ; clear bit flags
-    mov 0x00, a
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                          usb initalization                          ;
@@ -86,21 +114,35 @@ _usbInit:
     mov     a, #0x08
     movx    @dptr, a ; usbcs = 0x08, disable pull-up
 
-    ; delay for ~12ms @ 16MHz
-    ;   size total 10 byte
-    ;   ((255*3 + 2) * 255 + 255*3 + 2) / 16000000 = .01227200
-    mov     r5, #0x80       ; 2 bytes, 2 cycles
+    clr a
+    mov BIT_REG_0_7, a     ; clr bit registers 0x00..0x07
+    mov r0, a
+
+.if LONGER_DISCONNECT
+    mov     r5, #0x80  ; 2 bytes, 2 cycles
 00003$:
-    mov     r6, #0xff       ; 2 bytes, 2 cycles
+    mov     r6, a      ; 1 bytes, 1 cycles
 00002$:
-    mov     r7, #0xff       ; 2 bytes, 2 cycles
+    mov     r7, a      ; 1 bytes, 1 cycles
 00001$:
     djnz    r7, 00001$ ; 3 bytes, 3 cycles
     djnz    r6, 00002$ ; 3 bytes, 3 cycles
     djnz    r5, 00003$ ; 3 bytes, 3 cycles
+.else
+    ; delay for ~12ms @ 16MHz
+    ;   size total 10 byte
+    ; ((((256 * 3) + 1) * 256)+1) / 16000000 = .01230406
+    mov     r6, a      ; 1 bytes, 1 cycles
+00002$:
+    mov     r7, a      ; 1 bytes, 1 cycles
+00001$:
+    djnz    r7, 00001$ ; 3 bytes, 3 cycles
+    djnz    r6, 00002$ ; 3 bytes, 3 cycles
+.endif
 
     ; reconnect the usb device
-    clr     a
+    ; clr     a ;
+    ; NOTE: EXPECT a == 0 from above
     movx    @dptr, a ; usbcs = 0x00, enable pull-up
 
     ;   setup in/out bulk ints
@@ -147,7 +189,14 @@ _usbInit:
 _start_loop:
 
     ; wait for USB interrupt
-    jnb     _USBIRQ, .
+
+.if KICK_WATCHDOG
+    acall   (_kick_dog - _BLOCK_OFFSET)
+    ; mov     r7, 0
+    ; djnz    r7, .
+.endif
+    jnb     _USBIRQ, _start_loop
+
     clr     _USBIRQ
 
 ; check which interrupt was triggered
@@ -169,11 +218,11 @@ int_sudav:
     ;     dptr = _usb_conf_desc
     ;   else
     ;     dptr = _usb_dev_desc
-    mov     dptr, #(_usb_dev_desc + _XRAM - _program_start)
+    mov     dptr, #(_usb_dev_desc + _XRAM - _BOOTLOADER_BLOCK)
     cjne    a, #0x02, 00001$
-    mov     dptr, #(_usb_conf_desc + _XRAM - _program_start)
+    mov     dptr, #(_usb_conf_desc + _XRAM - _BOOTLOADER_BLOCK)
 00001$:
-    lcall   (_finish_usb_ep0_transaction + _XRAM - _program_start)
+    acall   (_finish_usb_ep0_transaction - _BLOCK_OFFSET)
 
 ; handle int for int ep1 out
 int_ep1_out:
@@ -189,7 +238,7 @@ write_block: ;
     ; r3: number of packets to write
     jnb     BIT_WRITE_BLOCK, receive_command
 
-    lcall   (_flash_wen + _XRAM - _program_start)
+    acall   (_flash_wen - _BLOCK_OFFSET)
 
     mov     dptr, #_out1buf
     inc     _DPS
@@ -197,7 +246,7 @@ write_block: ;
     mov     _DPL1, r1
 
     mov     r7, #0x40
-    lcall   (_copy_between_dptr + _XRAM - _program_start)
+    acall   (_copy_between_dptr - _BLOCK_OFFSET)
 
     clr     _WEN
 
@@ -211,7 +260,7 @@ write_block: ;
 
     clr     BIT_WRITE_BLOCK
 skip_ep1_out:
-    ljmp   (usb_handling_final + _XRAM - _program_start)
+    ajmp   (usb_handling_final - _BLOCK_OFFSET)
 
 ; receive a command form the host
 receive_command:
@@ -229,6 +278,8 @@ receive_command:
 ; cmd1: version command
 ; send the bootloader version to the host
 cmd1:
+.if DISABLE_VERSION_CMD
+.else
     cjne    r6, #CMD_VERSION, cmd2
     mov     dptr, #_in1buf
     mov     a, #BOOTLOADER_VERSION_HI
@@ -240,14 +291,15 @@ cmd1:
     mov     dptr, #_in1bc
     mov     a, #0x02
     movx    @dptr, a
+.endif
 
 ; cmd2: write a page of flash.
 ; The next few usb packets are written to the flash
 cmd2:
     cjne    r6, #CMD_WRITE_INIT, cmd3
+    acall   (_flash_erase_page - _BLOCK_OFFSET)
     mov     a, r7
-    clr     c
-    rlc     a ; a = r7 * 2
+    rl      a ; a = r7 * 2
 
     mov     r3, #0x08   ; number of packets to write
     mov     r2, a       ; high order byte of address to write
@@ -261,7 +313,9 @@ cmd2:
 cmd3:
     cjne    r6, #CMD_READ_FLASH, cmd4
 
+.if RDIS_ENABLE
     jb      _RDIS, readback_disabled
+.endif
 
 readback_enabled: ; flash readback enabled, send the request block
     ; get flash block address
@@ -270,7 +324,7 @@ readback_enabled: ; flash readback enabled, send the request block
     mul     ab
     mov     _DPL, a ; a = dpl
     clr     a
-    jnb     BIT_FLASH_HALF_SELECT, 00001$
+    jb      BIT_FLASH_HALF_SELECT, 00001$
     mov     a, #0x40
 00001$:
     add     a, _B
@@ -280,35 +334,32 @@ readback_enabled: ; flash readback enabled, send the request block
     mov     dptr, #_in1buf
 
     mov     r7, #0x40
-    lcall   (_copy_between_dptr + _XRAM - _program_start)
+    acall   (_copy_between_dptr - _BLOCK_OFFSET)
 
     mov     dptr, #_in1bc
     mov     a, #0x40
     movx    @dptr, a
 
+.if RDIS_ENABLE
     sjmp    cmd4
+
 readback_disabled: ; flash readback disabled, send block full of 0xff or 0x00
                    ; depending on whether the block is unused (0xff) or
                    ; used (0x00).
     ; r7 == block number, so need to find its page number
     mov     a, r7
-    clr     c
-    rrc     a ; block_num / 2
-    clr     c
-    rrc     a ; block_num / 4
-    clr     c
-    rrc     a ; block_num / 8
-
-    clr     c
-    rlc     a ; (block_num / 8) * 2
+    rr      a ; block_num / 2
+    rr      a ; block_num / 4
+    rr      a ; block_num / 8
+    rl      a ; (block_num / 8) * 2
 
     mov     r7, #0x00 ; offset == 0x00
-    jnb     BIT_FLASH_HALF_SELECT, 00001$
-    mov     r7, #0x20 ; offset == 0x20
+    jb      BIT_FLASH_HALF_SELECT, 00001$
+    mov     r7, #0x40 ; offset == 0x40
 00001$:
-    add     a, r7 ; pn = (block_num / 8) * 2 + offset
+    add     a, r7 ; a <- pn*2 = (block_num / 8) * 2 + offset
 
-    mov     _DPH, a ; dptr = 0x0200 * (pn + 1)
+    mov     _DPH, a ; dptr = 0x0200 * pn
     mov     _DPL, #0x00
 
     mov     r3, #0xff ; r3 stores whether the block is used, and is the
@@ -340,18 +391,20 @@ fill_in1buf_byte: ; fill in endpoint bufer with the value in r3
     mov     dptr, #_in1bc ; send the in1buf
     mov     a, #0x40
     movx    @dptr, a
+.endif
 
 ; cmd4: erase cmd
 ; erases the given flash page
 ; sends a zero response packet to the host
 cmd4:
     cjne    r6, #CMD_ERASE_PAGE, cmd5
-    lcall   (_flash_erase_page + _XRAM - _program_start)
+    acall   (_flash_erase_page - _BLOCK_OFFSET)
     setb    BIT_SEND_ZERO
 
 ; cmd5: disable flash readback
 ; sends a zero response packet to the host
 cmd5:
+.if RDIS_ENABLE
     cjne    r6, #CMD_READ_DISABLE, cmd6
     setb    _INFEN
     mov     dptr, #_rdismb
@@ -369,7 +422,7 @@ cmd5:
     sjmp    00002$
 00001$:
     ; code here executes if _rdismb == 0xff
-    lcall   (_flash_wen + _XRAM - _program_start)
+    acall   (_flash_wen - _BLOCK_OFFSET)
     clr     a
     movx    @dptr, a
     jb      _RDYN, .; wait operation to finish while running from xram
@@ -377,6 +430,7 @@ cmd5:
     setb    BIT_SEND_ZERO
 00002$:
     clr     _INFEN
+.endif
 
 ; cmd6: select whether to program upper or lower region on 32kb flash chips
 ; send zero response
@@ -419,10 +473,10 @@ _clear_flags:
     mov     dptr, #_out1bc
     movx    @dptr, a
 
-    lcall   (_finish_usb_ep0_transaction + _XRAM - _program_start)
+    acall   (_finish_usb_ep0_transaction - _BLOCK_OFFSET)
 
 ; goto start of loop
-    ljmp    (_start_loop + _XRAM - _program_start)
+    ajmp    (_start_loop - _BLOCK_OFFSET)
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -473,7 +527,7 @@ _finish_usb_ep0_transaction:
     inc     _DPS
     mov     dptr, #_in0buf
     mov     ar7, r0
-    lcall   (_copy_between_dptr + _XRAM - _program_start)
+    acall   (_copy_between_dptr - _BLOCK_OFFSET)
     mov     dptr, #_in0bc
     mov     a, r0
     movx    @dptr, a
@@ -493,12 +547,21 @@ _flash_wen:
 ; Register args: r7
 ; r7: the page to erase.  r7 < 64
 _flash_erase_page:
-    lcall   (_flash_wen + _XRAM - _program_start)
+    acall   (_flash_wen -  _BLOCK_OFFSET)
     mov       _FCR, r7  ; erase this page
     jb _RDYN, . ; wait operation to finish while running from xram
 
     clr _WEN
     ret
+
+.if KICK_WATCHDOG
+_kick_dog:
+    mov     _REGXH, #0xff
+    mov     _REGXL, #0xff
+    mov     _REGXC, _WWD
+    ret
+.endif
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                                data                                 ;
@@ -556,3 +619,7 @@ _usb_conf_desc:
     .byte   #0x40,#0x00       ; 64      ; wMaxPacketSize
     .db     #_EP1_INTERVAL    ;         ; bInterval
 _program_end:
+
+; .org 0x7800
+; ; .db "hello world"
+; .ascii "hello world"
