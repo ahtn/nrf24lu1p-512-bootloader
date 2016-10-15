@@ -2,7 +2,7 @@
 ; NRF24LU1+ datasheet. Code is less than 512 bytes, so it fits in 1 page.
 ;
 ; NOTE: Currently always erases the given page on a flash write cmd, but
-; the nordic version only erases the page when necessary.
+; the Nordic version only erases the page when necessary.
 ;
 ; NOTE:
 ;   Set PAN_011 to cover hardware issuse with older chips (before ~2009).
@@ -24,16 +24,16 @@
 ; 0 -> last page of 32kb flash
 ; BOOTLOADER_BLOCK_CUSTOM can alternatively be used to store it in a custom page.
 FLASH_SIZE_16 = 1
-; BOOTLOADER_BLOCK_CUSTOM   = 0x6600 ; should be divisble by page size (0x200)
+; BOOTLOADER_BLOCK_CUSTOM   = 0x6600 ; should be divisible by page size (0x200)
 
-; If set, this will prevent readback of the flash when the RDIS bit is configured
-; by the info page. Disabling this feature will allow readback of th flash always.
-RDIS_ENABLE = 1
+; If set, this will prevent read back of the flash when the RDIS bit is configured
+; by the info page. Disabling this feature will allow read back of the flash always.
+RDIS_ENABLE = 0
 
 ; Enables watchdog timer.
 KICK_WATCHDOG = 1
 
-; work around for hardware bug discused in PAN-011
+; work around for hardware bug discussed in PAN-011
 PAN_011 = 0
 
 ; store bootloader at start of flash, mainly for debugging purposes
@@ -124,7 +124,7 @@ _program_start:
 .endif
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                          usb initalization                          ;
+;                          usb initialization                         ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; setup code for usb
@@ -317,7 +317,7 @@ cmd3:
     jb      _RDIS, readback_disabled
 .endif
 
-readback_enabled: ; flash readback enabled, send the request block
+readback_enabled: ; flash read back enabled, send the request block
     ; get flash block address
     mov     a, r7
     mov     b, #0x40
@@ -343,7 +343,7 @@ readback_enabled: ; flash readback enabled, send the request block
 .if RDIS_ENABLE
     sjmp    cmd4
 
-readback_disabled: ; flash readback disabled, send block full of 0xff or 0x00
+readback_disabled: ; flash read back disabled, send block full of 0xff or 0x00
                    ; depending on whether the block is unused (0xff) or
                    ; used (0x00).
     ; r7 == block number, so need to find its page number
@@ -405,7 +405,7 @@ cmd4:
     acall   _flash_erase_page
     setb    BIT_SEND_ZERO
 
-; cmd5: disable flash readback
+; cmd5: disable flash read back
 ; sends a zero response packet to the host
 cmd5:
 .if RDIS_ENABLE
