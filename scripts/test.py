@@ -213,6 +213,10 @@ elif test == "write_hex":
 elif test == "zero_page_0":
     flash_write_page(0, bytes([0]*512))
 
+elif test == "zero_all":
+    for i in range(64):
+        flash_write_page(i, bytes([0]*512))
+
 elif test == "read_disable":
     flash_read_disable()
 elif test == "6":

@@ -2,4 +2,5 @@
 *.lk
 *.mem
 *.map
+nrfburn.txt
 obj

@@ -34,4 +34,10 @@ clean:
 flash: clean $(TARGET) size
 	nrfburn -f 16 -w $(TARGET)
 
+flash16: clean $(TARGET) size
+	nrfburn -f 16 -w $(TARGET)
+
+flash32: clean $(TARGET) size
+	nrfburn -f 32 -w $(TARGET)
+
 .PHONY: size clean flash
