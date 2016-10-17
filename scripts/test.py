@@ -85,8 +85,12 @@ def read_usb_in():
 
 def print_usb_response():
     data = ep1in.read(64, 1000)
-    # print(bytes_to_str(data))
+    print(bytes_to_str(data))
     return data
+
+def usb_get_response():
+    # todo error handling
+    return ep1in.read(64, 1000)
 
 def bootloader_version():
     usb_cmd(bootloader.CMD_VERSION)
@@ -98,7 +102,7 @@ def flash_read_disable():
 
 def flash_read_block(block):
     usb_cmd(bootloader.CMD_READ_FLASH, block)
-    return print_usb_response()
+    return usb_get_response()
 
 def flash_erase_page(page_num):
     usb_cmd(bootloader.CMD_ERASE_PAGE, page_num)
@@ -106,7 +110,7 @@ def flash_erase_page(page_num):
 
 def flash_select_half(half):
     usb_cmd(bootloader.CMD_SELECT_FLASH, half)
-    return print_usb_response()
+    return usb_get_response()
 
 def flash_write_page(page_num, page):
     usb_cmd(bootloader.CMD_WRITE_INIT, page_num)
@@ -118,16 +122,46 @@ def flash_write_page(page_num, page):
         ep1out.write(block)
         ep1in.read(64, 10000)
 
-def flash_print_all(size=16):
-    result = []
+def is_empty_flash_data(data):
+    for b in data:
+        if b != 0xff:
+            return False
+    return True
+
+def chunk_iterator(data, chunk_size):
+    for i in range(0, len(data), chunk_size):
+        yield data[i:i + chunk_size]
+
+def flash_read_to_hex(size=16):
+    # result = []
+    if size not in [16, 32]:
+        raise Exception("Cannot read flash size {} only 16 or 32".format(size))
+
+    page_size = 0x200
+    block_size = 0x40
+    blocks_per_16kb = 0x100
+    hexfile = intelhex.IntelHex()
+    cur_addr = 0x0000
+
+    def read_16kb_region():
+        chunks_per_block = 4
+        chunk_size = block_size // chunks_per_block
+        nonlocal cur_addr
+        for i in range(blocks_per_16kb):
+            block = flash_read_block(i)
+            # break the block into chunks to we can check which regions
+            # actuall have flash data
+            for chunk in chunk_iterator(block, chunk_size):
+                if not is_empty_flash_data(chunk):
+                    hexfile.puts(cur_addr, bytes(chunk))
+                cur_addr += chunk_size
+
     flash_select_half(0)
-    for i in range(256):
-        result += flash_read_block(i)
+    read_16kb_region()
     if size == 32:
         flash_select_half(1)
-        for i in range(256):
-            result += flash_read_block(i)
-    return result
+        read_16kb_region()
+    return hexfile
 
 def hex_dump(data):
     addr = 0
@@ -136,51 +170,22 @@ def hex_dump(data):
         addr += 64
 
 import sys
-# test = int(sys.argv[1])
-test = sys.argv[1]
+arg = sys.argv[1]
 
-if test == "read_16":
-    data = flash_print_all(size=16)
-    hex_dump(data)
-elif test == "read_32":
-    data = flash_print_all(size=32)
-    hex_dump(data)
+# TODO: cleanup cmd line handling
+outfile = "readback.hex"
 
-elif test == "10":
-    flash_select_half(0)
-    flash_write_page(1, bytes([i%256 for i in range(512)]))
+if arg == "read_16":
+    ihex = flash_read_to_hex(size=16)
+    ihex.dump()
+    ihex.tofile(outfile, "hex")
 
-    flash_read_block(0)
-    flash_read_block(8)
-    flash_read_block(9)
-elif test == "20":
-    flash_select_half(0)
+elif arg == "read_32":
+    ihex = flash_read_to_hex(size=32)
+    ihex.dump()
+    ihex.tofile(outfile, "hex")
 
-    flash_read_block(0)
-    flash_read_block(8)
-    flash_read_block(9)
-
-    flash_write_page(1, bytes([0]+[0xff for i in range(511)]))
-
-    flash_read_block(0)
-    flash_read_block(8)
-    flash_read_block(9)
-
-elif test == "30":
-    flash_read_block(0x00)
-    flash_read_block(0x08)
-    flash_read_block(0x10)
-    flash_read_disable()
-    flash_write_page(1, bytes([0]+[0xff for i in range(511)]))
-    flash_read_block(0x00)
-    flash_read_block(0x08)
-    flash_read_block(0x10)
-    flash_write_page(2, bytes([0]+[0xff for i in range(511)]))
-    flash_read_block(0x00)
-    flash_read_block(0x08)
-    flash_read_block(0x10)
-
-elif test == "write_hex":
+elif arg == "write_hex":
     flash_size = 0x8000
     page_size = 0x0200
     num_pages = flash_size // page_size
@@ -210,16 +215,14 @@ elif test == "write_hex":
 
         flash_write_page(page_num, page_data)
 
-elif test == "zero_page_0":
-    flash_write_page(0, bytes([0]*512))
-
-elif test == "zero_all":
+elif arg == "zero_all":
     for i in range(64):
         flash_write_page(i, bytes([0]*512))
 
-elif test == "read_disable":
+elif arg == "read_disable":
     flash_read_disable()
-elif test == "6":
+
+elif arg == "new_cmd":
     pass
 
 # It may raise USBError if there's e.g. no kernel driver loaded at all
