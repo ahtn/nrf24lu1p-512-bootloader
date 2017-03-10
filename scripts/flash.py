@@ -9,6 +9,9 @@ import intelhex
 ID_VENDOR = 0x1915
 ID_PRODUCT = 0x0101
 
+# TODO: rewrite this with argparse #
+# TODO: use the fact that we know endpoint values to clean this up #
+
 debug = True
 
 # def usb_setup():
@@ -36,31 +39,6 @@ ep1out = usb.util.find_descriptor(
     lambda e: \
         e.bEndpointAddress == 0x01)
 
-if False:
-    print("cfg: ")
-    print(cfg)
-    print("\n intf:")
-    print(intf)
-    print("\n ep1out:")
-    print(ep1out)
-    print("\n ep1in:")
-    print(ep1in)
-    print("0x{:x} 0x{:x}".format(ep1in.bEndpointAddress, ep1in.wMaxPacketSize))
-
-# def usb_cleanup():
-#     # It may raise USBError if there's e.g. no kernel driver loaded at all
-#     if reattach:
-#         dev.attach_kernel_driver(1)
-
-# It may raise USBError if there's e.g. no kernel driver loaded at all
-if reattach:
-    dev.attach_kernel_driver(1)
-
-
-def print_cmd_sent(name, cmd):
-    # print("cmd: {} \t raw_cmd: {}".format(name, cmd) )
-    # print("cmd: {} \t raw_cmd: {}".format(name, cmd) )
-    pass
 
 def flash_erase_all():
     for i in range(32):
@@ -73,7 +51,6 @@ def usb_cmd(cmd, arg=None):
     raw_cmd = bytes([cmd])
     if arg != None:
         raw_cmd = bytes([cmd, arg])
-    print_cmd_sent("", raw_cmd)
     ep1out.write(raw_cmd)
 
 def usb_cmd_recv_zero(cmd):
@@ -111,6 +88,10 @@ def flash_erase_page(page_num):
 def flash_select_half(half):
     usb_cmd(bootloader.CMD_SELECT_FLASH, half)
     return usb_get_response()
+
+def mcu_reset():
+    usb_cmd(bootloader.CMD_RESET)
+    return
 
 def flash_write_page(page_num, page):
     usb_cmd(bootloader.CMD_WRITE_INIT, page_num)
@@ -198,6 +179,8 @@ elif arg == "write_hex":
     hexfile.padding = 0xff
     data = hexfile.tobinarray(start=0x0000, end=flash_size)
 
+    print("Starting to write hex file:");
+
     for page_num in range(0, num_pages):
         page_start = page_num * page_size
         page_end = (page_num+1) * page_size
@@ -208,12 +191,17 @@ elif arg == "write_hex":
             if b != 0xff:
                 is_empty_page = False
                 break
+
         if is_empty_page:
             continue
+        else:
+            flash_erase_page(page_num)
 
         # print("{:x} {:x} {:x} {}".format(page_start, page_end, len(page_data), page_data))
 
         flash_write_page(page_num, page_data)
+    mcu_reset()
+    print("Done")
 
 elif arg == "zero_all":
     for i in range(64):

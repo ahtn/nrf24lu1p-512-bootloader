@@ -33,6 +33,9 @@ RDIS_ENABLE = 0
 ; Enables watchdog timer.
 KICK_WATCHDOG = 1
 
+; Enables reset command
+RESET_COMMAND = 1
+
 ; work around for hardware bug discussed in PAN-011
 PAN_011 = 0
 
@@ -439,13 +442,23 @@ cmd5:
 ; cmd6: select whether to program upper or lower region on 32kb flash chips
 ; send zero response
 cmd6:
-    cjne    r6, #CMD_SELECT_FLASH, no_command_match
+    cjne    r6, #CMD_SELECT_FLASH, cmd7
     clr     BIT_FLASH_HALF_SELECT
     mov     a, r7
     jnz     00001$
     setb    BIT_FLASH_HALF_SELECT
 00001$:
     setb    BIT_SEND_ZERO
+
+; cmd7: select whether to program upper or lower region on 32kb flash chips
+cmd7:
+.if RESET_COMMAND
+    cjne    r6, #CMD_RESET, no_command_match
+    mov     _TICKDV, #0x03
+    acall   _kick_dog
+    ajmp    .
+.endif
+
 ; didn't match any of the commands above, or fell through to this branch
 no_command_match:
 usb_handling_final:
@@ -559,7 +572,7 @@ _flash_erase_page:
     clr _WEN
     ret
 
-.if KICK_WATCHDOG
+.if KICK_WATCHDOG | RESET_COMMAND
 _kick_dog:
     mov     _REGXH, #0x0f
     mov     _REGXL, #0xff

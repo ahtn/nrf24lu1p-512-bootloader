@@ -17,6 +17,7 @@ CMD_READ_FLASH     = 0x03
 CMD_ERASE_PAGE     = 0x04
 CMD_READ_DISABLE   = 0x05
 CMD_SELECT_FLASH   = 0x06
+CMD_RESET          = 0x07
 
 ; USB poll rate in ms
 _EP1_INTERVAL = 0x01
