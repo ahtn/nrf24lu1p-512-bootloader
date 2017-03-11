@@ -215,19 +215,40 @@ int_sudav:
     cjne    a, #_INT_SUDAV, int_ep1_out
     mov     dptr, #(_usbReqGetDesc + 0x0006)
     movx    a, @dptr
-    mov     r0, a
+    mov     r7, a ; REQUESTED_RESPONSE_SIZE
     mov     dptr, #(_usbReqGetDesc + 0x0003)
     movx    a, @dptr ; a = usbReqGetDesc.descType
 
+DEVICE_DESC_SIZE = 0x12
+CONFIG_DESC_SIZE = 0x20
     ;   if descType == 0x01
     ;     dptr = _usb_dev_desc
     ;   else // i.e. if descType == 0x02
     ;     dptr = _usb_conf_desc
+    cjne    a, #0x01, 00001$
     mov     dptr, #(_usb_dev_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
-    cjne    a, #0x02, 00001$
-    mov     dptr, #(_usb_conf_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
+    mov     r0, #DEVICE_DESC_SIZE
+    ajmp    send_descriptor
 00001$:
+    cjne    a, #0x02, finish_transaction
+    mov     dptr, #(_usb_conf_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
+
+; if the report request size > CONFIG_DESC_SIZE:
+;    send CONFIG_DESC_SIZE bytes (a)
+; else:
+;    send REQUESTED_RESPONSE_SIZE bytes (r7)
+    mov     a, #CONFIG_DESC_SIZE
+    subb    a, r7 ; carry set if r7 > a
+    mov     a, #CONFIG_DESC_SIZE
+    jc      00002$
+    mov     a, r7
+00002$:
+    mov     r0, a
+
+send_descriptor:
     acall   _finish_usb_ep0_transaction
+finish_transaction:
+    ajmp     _clear_flags
 
 ; handle int for int ep1 out
 int_ep1_out:
@@ -529,16 +550,16 @@ _copy_between_dptr:
     djnz    r7, 00001$
     ret
 
-; Finishes a usb transaction. If r0==0, then USB ack stall. If r0 != 0,
-; then return
+; Finishes a usb transaction. If r0==0, then USB hand shake ack. If r0 != 0,
+; then send the buffer in dptr over ep0
 ; Register input contents:
 ; r0: num of bytes to transfer on usb endpoint in
-; dptr1: data to send on USB
+; dptr: data to send on USB
 _finish_usb_ep0_transaction:
     inc     r0
     djnz    r0, 00001$          ; if r0 == 0, then USB HAND Shake acknowledge
         mov     dptr, #_ep0cs
-        mov     a, #0x02
+        mov     a, #0x02        ; USB_HANDSHACK_ACK
         movx    @dptr, a
         ret
 00001$:                         ; else r0 == number of bytes to send on ep0
