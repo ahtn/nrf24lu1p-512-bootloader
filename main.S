@@ -254,7 +254,7 @@ int_sudav:
     mov     r6, #CONFIG_DESC_SIZE
     ajmp    send_descriptor
 00002$:
-    cjne    a, #0x22, finish_transaction
+    cjne    a, #0x22, send_ack
     mov     dptr, #(_usb_hid_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
     mov     r6, #HID_DESC_SIZE
 
@@ -270,10 +270,14 @@ send_descriptor:
     mov     a, r7
 00003$:
     mov     r0, a
-    acall   _finish_usb_ep0_transaction
+    ajmp    finish_transaction
+
+send_ack:
+    mov     r0, #0x00
 
 finish_transaction:
-    ajmp     _clear_flags
+    acall   _finish_usb_ep0_transaction
+    clr     a
 
 ; handle int for int ep1 out
 int_ep1_out:

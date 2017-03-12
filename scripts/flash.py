@@ -18,10 +18,13 @@ debug = True
 # dev = usb.core.find()
 dev = usb.core.find(idVendor=ID_VENDOR, idProduct=ID_PRODUCT)
 
+intf_num = 0
+
 reattach = False
-if dev.is_kernel_driver_active(1):
+if dev.is_kernel_driver_active(intf_num):
+    print("disable kernel driver")
     reattach = True
-    dev.detach_kernel_driver(1)
+    dev.detach_kernel_driver(intf_num)
 
 cfg = dev.get_active_configuration()
 intf = cfg[(0,0)]
@@ -150,7 +153,7 @@ def hex_dump(data):
         print("{:04x}".format(addr), bytes_to_str(block))
         addr += 64
 
-import sys
+import sys, time
 arg = sys.argv[1]
 
 # TODO: cleanup cmd line handling
@@ -216,4 +219,4 @@ elif arg == "new_cmd":
 # It may raise USBError if there's e.g. no kernel driver loaded at all
 if reattach:
     print("reattach")
-    dev.attach_kernel_driver(1)
+    dev.attach_kernel_driver(intf_num)
