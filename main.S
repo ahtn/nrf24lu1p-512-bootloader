@@ -209,44 +209,69 @@ _handle_ivec:
     mov     dptr, #_ivec
     movx    a, @dptr
 
+DEVICE_DESC_SIZE = 0x12
+CONFIG_DESC_SIZE = 0x29
+HID_DESC_SIZE = 0x18
+
+; usb get descriptor request
+USB_REQ_DESC_TYPE = 0x03
+USB_REQ_LENGTH_LSB = 0x06
+USB_REQ_LENGTH_MSB = 0x07
 ; handle int_sudav interrupt
-; sends device/conf descriptor based on request
+; sends device/conf/hid descriptor based on request
+; For other packet types, the content is ignored an ack packet is sent
 int_sudav:
     cjne    a, #_INT_SUDAV, int_ep1_out
-    mov     dptr, #(_usbReqGetDesc + 0x0006)
-    movx    a, @dptr
-    mov     r7, a ; REQUESTED_RESPONSE_SIZE
-    mov     dptr, #(_usbReqGetDesc + 0x0003)
+    ; check the length of the requested descriptor
+    mov     dptr, #(_usbReqGetDesc + USB_REQ_LENGTH_LSB)
+    movx    a, @dptr ; USB_REQ_LENGTH_LSB
+    mov     r7, a ; REQUESTED_RESPONSE_SIZE_LSB
+    inc     dptr
+    movx    a, @dptr ; USB_REQ_LENGTH_MSB
+    ; if USB_REQ_LENGTH_MSB != 0, then it's larger than anything we expect to
+    ; handle, so set r7 = 0xff
+    jz      00000$
+    mov     r7, #0xff
+00000$:
+
+    ; get the requested descriptor type
+    mov     dptr, #(_usbReqGetDesc + USB_REQ_DESC_TYPE)
     movx    a, @dptr ; a = usbReqGetDesc.descType
 
-DEVICE_DESC_SIZE = 0x12
-CONFIG_DESC_SIZE = 0x20
     ;   if descType == 0x01
     ;     dptr = _usb_dev_desc
-    ;   else // i.e. if descType == 0x02
+    ;   elif // i.e. if descType == 0x02
     ;     dptr = _usb_conf_desc
+    ;   elif // i.e. if descType == 0x22
+    ;     dptr = _usb_hid_desc
     cjne    a, #0x01, 00001$
     mov     dptr, #(_usb_dev_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
-    mov     r0, #DEVICE_DESC_SIZE
+    mov     r6, #DEVICE_DESC_SIZE
     ajmp    send_descriptor
 00001$:
-    cjne    a, #0x02, finish_transaction
+    cjne    a, #0x02, 00002$
     mov     dptr, #(_usb_conf_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
-
-; if the report request size > CONFIG_DESC_SIZE:
-;    send CONFIG_DESC_SIZE bytes (a)
-; else:
-;    send REQUESTED_RESPONSE_SIZE bytes (r7)
-    mov     a, #CONFIG_DESC_SIZE
-    subb    a, r7 ; carry set if r7 > a
-    mov     a, #CONFIG_DESC_SIZE
-    jc      00002$
-    mov     a, r7
+    mov     r6, #CONFIG_DESC_SIZE
+    ajmp    send_descriptor
 00002$:
-    mov     r0, a
+    cjne    a, #0x22, finish_transaction
+    mov     dptr, #(_usb_hid_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
+    mov     r6, #HID_DESC_SIZE
 
 send_descriptor:
+; if the report request size > descriptor actual size:
+;    send actual size
+; else:
+;    send requested size
+    mov     a, r6 ; actual size
+    subb    a, r7 ; carry set if r7 > a
+    mov     a, r6
+    jc      00003$
+    mov     a, r7
+00003$:
+    mov     r0, a
     acall   _finish_usb_ep0_transaction
+
 finish_transaction:
     ajmp     _clear_flags
 
@@ -627,7 +652,7 @@ _usb_conf_desc:
     ; configuration descriptor
     .db     #0x09             ; 9       ; bLength
     .db     #0x02             ; 2       ; bDescriptorType
-    .byte   #0x20,#0x00       ; 32      ; wTotalLength
+    .byte   #0x29,#0x00       ; 41      ; wTotalLength
     .db     #0x01             ; 1       ; bNumInterfaces
     .db     #0x01             ; 1       ; bConfigurationValue
     .db     #0x00             ; 0       ; iConfiguration
@@ -639,10 +664,19 @@ _usb_conf_desc:
     .db     #0x00             ; 0       ; bInterfaceNumber
     .db     #0x00             ; 0       ; bAlternateSetting
     .db     #0x02             ; 2       ; bNumEndpoints
-    .db     #0x00             ; 0       ; bInterfaceClass
+    ; .db     #0x00             ; 0       ; bInterfaceClass (vendor)
+    .db     #0x03             ; 0       ; bInterfaceClass (HID)
     .db     #0x00             ; 0       ; bInterfaceSubClass
     .db     #0x00             ; 0       ; bInterfaceProtocol
     .db     #0x00             ; 0       ; iInterface
+    ; HID descriptor
+    .db     #0x09             ; 9       ; bLength
+    .db     #0x21             ;         ; bDescriptorType
+    .byte   #0x11,#0x01       ;         ; bcdHID
+    .db     #0x00             ;         ; bCountryCode
+    .db     #0x01             ;         ; bNumDescriptors
+    .db     #0x22             ;         ; bDescriptorType_HID
+    .byte   #0x18,#0x00       ; 24      ; wDescriptorLength
     ; ep1in descriptor
     .db     #0x07             ; 7       ; bLength
     .db     #0x05             ; 5       ; bDescriptorType
@@ -650,13 +684,38 @@ _usb_conf_desc:
     .db     #0x03             ; 3       ; bmAttributes
     .byte   #0x40,#0x00       ; 64      ; wMaxPacketSize
     .db     #_EP1_INTERVAL    ;         ; bInterval
-    ; ep0in descriptor
+    ; ep1out descriptor
     .db     #0x07             ; 7       ; bLength
     .db     #0x05             ; 5       ; bDescriptorType
     .db     #0x01             ; 1       ; bEndpointAddress
     .db     #0x03             ; 3       ; bmAttributes
     .byte   #0x40,#0x00       ; 64      ; wMaxPacketSize
     .db     #_EP1_INTERVAL    ;         ; bInterval
+_usb_hid_desc:
+    .db #0x06               ; HID_USAGE_PAGE(2), DB16(HID_USAGE_PAGE_VENDOR_START),
+    .byte #0x00,#0xff
+    .db #0x09               ; HID_USAGE(1), HID_USAGE_VENDOR_0,
+    .db #0x00
+    .db #0xa1               ; HID_COLLECTION(1), HID_COLLECTION_VENDOR,
+    .db #0x80
+    .db #0x15               ;     HID_LOGICAL_MINIMUM(1), DB8(0),
+    .db #0x00
+    .db #0x25               ;     HID_LOGICAL_MAXIMUM(1), DB8(UINT8_MAX),
+    .db #0xff
+    .db #0x75               ;     HID_REPORT_SIZE(1), 8,
+    .db #0x08
+    .db #0x95               ;     HID_REPORT_COUNT(1), DB8(EP_OUT_SIZE_VENDOR),
+    .db #0x40
+    .db #0x09               ;     HID_USAGE(1), HID_USAGE_VENDOR_1,
+    .db #0x01
+    .db #0x81               ;     HID_INPUT(1), IOF_DATA | IOF_VARIABLE | IOF_ABSOLUTE,
+    .db #0x02
+    .db #0x09               ;     HID_USAGE(1), HID_USAGE_VENDOR_2,
+    .db #0x02
+    .db #0x91               ;     HID_OUTPUT(1), IOF_DATA | IOF_VARIABLE | IOF_ABSOLUTE,
+    .db #0x02
+    .db #0xc0               ; HID_END_COLLECTION(0),
+
 _program_end:
 
 ; .org 0x7800
