@@ -169,6 +169,11 @@ elif arg == "read_32":
     ihex.dump()
     ihex.tofile(outfile, "hex")
 
+elif arg == "version":
+    version = bootloader_version()
+    print(version)
+
+
 elif arg == "write_hex":
     flash_size = 0x8000
     page_size = 0x0200
@@ -203,6 +208,7 @@ elif arg == "write_hex":
         # print("{:x} {:x} {:x} {}".format(page_start, page_end, len(page_data), page_data))
 
         flash_write_page(page_num, page_data)
+    reattach = False
     mcu_reset()
     print("Done")
 

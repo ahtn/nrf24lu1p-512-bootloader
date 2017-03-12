@@ -80,6 +80,9 @@ reset_vec:
 
 _BLOCK_OFFSET = _BOOTLOADER_BLOCK % 0x800
 
+EP0_SIZE = 0x40
+EP1_SIZE = 0x40
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                 code that loads bootloader to xram                  ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -342,7 +345,7 @@ cmd1:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
-    mov     a, #0x02
+    mov     a, #EP1_SIZE
     movx    @dptr, a
 
 ; cmd2: write a page of flash.
@@ -390,7 +393,7 @@ readback_enabled: ; flash read back enabled, send the request block
     acall   _copy_between_dptr
 
     mov     dptr, #_in1bc
-    mov     a, #0x40
+    mov     a, #EP1_SIZE
     movx    @dptr, a
 
 .if RDIS_ENABLE
@@ -446,7 +449,7 @@ fill_in1buf_byte: ; fill in endpoint bufer with the value in r3
     djnz    r7, fill_in1buf_byte
 
     mov     dptr, #_in1bc ; send the in1buf
-    mov     a, #0x40
+    mov     a, #EP1_SIZE
     movx    @dptr, a
 .endif
 
@@ -474,7 +477,7 @@ cmd5:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
-    mov     a, #0x01
+    mov     a, #EP1_SIZE
     movx    @dptr, a
     sjmp    00002$
 00001$:
@@ -521,7 +524,7 @@ _send_usb_zero:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
-    mov     a, #0x01
+    mov     a, #EP1_SIZE
     movx    @dptr, a
     clr     BIT_SEND_ZERO
 00002$:
