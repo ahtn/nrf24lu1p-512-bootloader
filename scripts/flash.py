@@ -43,10 +43,6 @@ ep1out = usb.util.find_descriptor(
         e.bEndpointAddress == 0x01)
 
 
-def flash_erase_all():
-    for i in range(32):
-        flash_erase(i)
-
 def bytes_to_str(byte_array):
     return ''.join(["{:02x}".format(byte) for byte in byte_array])
 
@@ -56,17 +52,12 @@ def usb_cmd(cmd, arg=None):
         raw_cmd = bytes([cmd, arg])
     ep1out.write(raw_cmd)
 
-def usb_cmd_recv_zero(cmd):
-    return read_usb_in() != 0x00
-
 def read_usb_in():
     data = ep1in.read(64, 1000)
     return data
 
 def print_usb_response():
-    data = ep1in.read(64, 1000)
-    print(bytes_to_str(data))
-    return data
+    print(bytes_to_str(usb_get_response()))
 
 def usb_get_response():
     # todo error handling
@@ -74,11 +65,11 @@ def usb_get_response():
 
 def bootloader_version():
     usb_cmd(bootloader.CMD_VERSION)
-    return print_usb_response()
+    print_usb_response()
 
 def flash_read_disable():
     usb_cmd(bootloader.CMD_READ_DISABLE)
-    return print_usb_response()
+    print_usb_response()
 
 def flash_read_block(block):
     usb_cmd(bootloader.CMD_READ_FLASH, block)
@@ -86,7 +77,7 @@ def flash_read_block(block):
 
 def flash_erase_page(page_num):
     usb_cmd(bootloader.CMD_ERASE_PAGE, page_num)
-    return print_usb_response()
+    print_usb_response()
 
 def flash_select_half(half):
     usb_cmd(bootloader.CMD_SELECT_FLASH, half)
@@ -94,7 +85,6 @@ def flash_select_half(half):
 
 def mcu_reset():
     usb_cmd(bootloader.CMD_RESET)
-    return
 
 def flash_write_page(page_num, page):
     usb_cmd(bootloader.CMD_WRITE_INIT, page_num)
@@ -170,10 +160,9 @@ elif arg == "read_32":
     ihex.tofile(outfile, "hex")
 
 elif arg == "version":
-    version = bootloader_version()
-    print(version)
+    bootloader_version()
 
-
+# TODO: read back flash and verify what we wrote #
 elif arg == "write_hex":
     flash_size = 0x8000
     page_size = 0x0200
@@ -202,19 +191,14 @@ elif arg == "write_hex":
 
         if is_empty_page:
             continue
-        else:
-            flash_erase_page(page_num)
 
         # print("{:x} {:x} {:x} {}".format(page_start, page_end, len(page_data), page_data))
 
         flash_write_page(page_num, page_data)
-    reattach = False
+
+    reattach = False;
     mcu_reset()
     print("Done")
-
-elif arg == "zero_all":
-    for i in range(64):
-        flash_write_page(i, bytes([0]*512))
 
 elif arg == "read_disable":
     flash_read_disable()
@@ -222,7 +206,9 @@ elif arg == "read_disable":
 elif arg == "new_cmd":
     pass
 
-# It may raise USBError if there's e.g. no kernel driver loaded at all
-if reattach:
-    print("reattach")
-    dev.attach_kernel_driver(intf_num)
+# # It may raise USBError if there's e.g. no kernel driver loaded at all
+# if reattach:
+#     print("reattach")
+#     while dev.is_kernel_driver_active(intf_num):
+#         pass
+#     dev.attach_kernel_driver(intf_num)

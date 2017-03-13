@@ -42,6 +42,7 @@ PAN_011 = 0
 ; store bootloader at start of flash, mainly for debugging purposes
 BOOTLOADER_AT_START = 0
 
+_EP1_INTERVAL = 0x01;
 
 ; bit register definitions
 BIT_REG_0_7 = 0x20
@@ -166,19 +167,19 @@ _usbInit:
     movx    @dptr, a                     ; outbulkval = 0xff
 
     mov     dptr, #_in_irq               ; dptr = _in_irq
-    mov     a, #0xff
+    ; mov     a, #0x03
     movx    @dptr, a ; (0xC7A9) in_irq;
     inc     dptr
     movx    @dptr, a ; (0xC7AA) out_irq;
     inc     dptr
     movx    @dptr, a ; (0xC7AB) usbirq;
     inc     dptr
-    mov     a, #0x03
+    ; mov     a, #0x03
     movx    @dptr, a ; (0xC7AC) in_ien;
     inc     dptr
     movx    @dptr, a ; (0xC7AD) out_ien;
     inc     dptr
-    mov     a, #0x01 ; (0xC7AE) usbien;
+    ; mov     a, #0x01 ; (0xC7AE) usbien;
     movx    @dptr, a
 
     ;   setup the USB RAM
@@ -257,7 +258,7 @@ int_sudav:
     mov     r6, #CONFIG_DESC_SIZE
     ajmp    send_descriptor
 00002$:
-    cjne    a, #0x22, send_ack
+    cjne    a, #0x22, goto_end
     mov     dptr, #(_usb_hid_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
     mov     r6, #HID_DESC_SIZE
 
@@ -273,14 +274,12 @@ send_descriptor:
     mov     a, r7
 00003$:
     mov     r0, a
-    ajmp    finish_transaction
-
-send_ack:
-    mov     r0, #0x00
 
 finish_transaction:
     acall   _finish_usb_ep0_transaction
-    clr     a
+
+goto_end:
+    ajmp    usb_handling_final
 
 ; handle int for int ep1 out
 int_ep1_out:
@@ -295,6 +294,15 @@ write_block: ;
     ; r2: high order byte of address to write
     ; r3: number of packets to write
     jnb     BIT_WRITE_BLOCK, receive_command
+
+; while writing bytes the mcu is halted. To make sure that this doesn't
+; interfere with any packets we might currently be sending, wait for those
+; packets to be sent.
+wait_ep1_in_not_busy:
+    mov     dptr, #_in1cs
+    movx    a, @dptr
+    anl     a, #0x02
+    jnz     wait_ep1_in_not_busy
 
     acall   _flash_wen
 
@@ -318,7 +326,7 @@ write_block: ;
 
     clr     BIT_WRITE_BLOCK
 skip_ep1_out:
-    ajmp   usb_handling_final
+    ajmp   no_command_match
 
 ; receive a command form the host
 receive_command:
@@ -345,7 +353,7 @@ cmd1:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
-    mov     a, #EP1_SIZE
+    mov     a, #0x40
     movx    @dptr, a
 
 ; cmd2: write a page of flash.
@@ -477,7 +485,7 @@ cmd5:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
-    mov     a, #EP1_SIZE
+    mov     a, #0x40
     movx    @dptr, a
     sjmp    00002$
 00001$:
@@ -514,37 +522,54 @@ cmd7:
 
 ; didn't match any of the commands above, or fell through to this branch
 no_command_match:
+
+    mov     dptr, #_out1bc
+    movx    @dptr, a
+
+
 usb_handling_final:
 
 ; some commands above send a packet with one 0 in them to the host after completing
 _send_usb_zero:
-    jnb     BIT_SEND_ZERO, 00002$
+    jnb     BIT_SEND_ZERO, dont_send_zero
+
     mov     dptr, #_in1buf
     clr     a
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
-    mov     a, #EP1_SIZE
+    mov     a, #0x40
     movx    @dptr, a
     clr     BIT_SEND_ZERO
-00002$:
+dont_send_zero:
+
+; wait_ep1_out_ready:
+;     mov     dptr, #_out1cs
+;     movx    a, @dptr
+;     anl     a, #0x02
+;     jnz     wait_ep1_out_ready
+
+; wait_ep1_out_ready:
+;     mov     dptr, #_in1cs
+;     movx    a, @dptr
+;     anl     a, #0x02
+;     jnz     wait_ep1_out_ready
+
 
 ; clear interrupt flags
 _clear_flags:
-    mov     a, #0xff
-    ; mov     a, #0x3f  ; ; datasheet says to use this value
+    mov     a, #0x03
+    ; mov     a, #0x03  ; ; datasheet says to use this value
     mov     dptr, #_in_irq  ; _in_irq
     movx    @dptr, a
     inc     dptr            ; _out_irq
     movx    @dptr, a
     inc     dptr            ; _usbirq
-    ; mov     a, #0x1f  ; ; datasheet says to use this value
-    movx    @dptr, a
-    ; mov     a, #0xff
-    mov     dptr, #_out1bc
     movx    @dptr, a
 
-    acall   _finish_usb_ep0_transaction
+    mov     dptr, #_ep0cs
+    mov     a, #0x02        ; USB_HANDSHACK_ACK
+    movx    @dptr, a
 
 ; goto start of loop
     ajmp    _start_loop
@@ -588,13 +613,6 @@ _copy_between_dptr:
 ; r0: num of bytes to transfer on usb endpoint in
 ; dptr: data to send on USB
 _finish_usb_ep0_transaction:
-    inc     r0
-    djnz    r0, 00001$          ; if r0 == 0, then USB HAND Shake acknowledge
-        mov     dptr, #_ep0cs
-        mov     a, #0x02        ; USB_HANDSHACK_ACK
-        movx    @dptr, a
-        ret
-00001$:                         ; else r0 == number of bytes to send on ep0
     inc     _DPS
     mov     dptr, #_in0buf
     mov     ar7, r0
@@ -722,6 +740,8 @@ _usb_hid_desc:
     .db #0x91               ;     HID_OUTPUT(1), IOF_DATA | IOF_VARIABLE | IOF_ABSOLUTE,
     .db #0x02
     .db #0xc0               ; HID_END_COLLECTION(0),
+
+
 
 _program_end:
 
