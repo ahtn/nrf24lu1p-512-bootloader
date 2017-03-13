@@ -39,6 +39,9 @@ RESET_COMMAND = 1
 ; work around for hardware bug discussed in PAN-011
 PAN_011 = 0
 
+; whether to use HID descriptor for a vendor defined device
+USE_HID_DESC = 1
+
 ; store bootloader at start of flash, mainly for debugging purposes
 BOOTLOADER_AT_START = 0
 
@@ -51,6 +54,17 @@ BIT_FLASH_HALF_SELECT = 0x01
 BIT_SEND_ZERO = 0x02
 BIT_WRITE_BLOCK = 0x03
 
+
+DEVICE_DESC_SIZE = 0x12
+
+.if USE_HID_DESC ; use a vendor defined HID device
+CONFIG_DESC_SIZE = 0x29
+HID_DESC_SIZE = 0x18
+INTF_CLASS = 0x03
+.else ; use a vendor defined interface
+INTF_CLASS = 0x00
+CONFIG_DESC_SIZE = 0x20
+.endif
 
 ; address space definitions
 _BLOCK_SIZE             = 0x0200
@@ -213,10 +227,6 @@ _handle_ivec:
     mov     dptr, #_ivec
     movx    a, @dptr
 
-DEVICE_DESC_SIZE = 0x12
-CONFIG_DESC_SIZE = 0x29
-HID_DESC_SIZE = 0x18
-
 ; usb get descriptor request
 USB_REQ_DESC_TYPE = 0x03
 USB_REQ_LENGTH_LSB = 0x06
@@ -253,17 +263,24 @@ int_sudav:
     mov     r6, #DEVICE_DESC_SIZE
     ajmp    send_descriptor
 00001$:
+.if USE_HID_DESC
     cjne    a, #0x02, 00002$
+.else
+    cjne    a, #0x02, goto_end
+.endif
     mov     dptr, #(_usb_conf_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
     mov     r6, #CONFIG_DESC_SIZE
+.if USE_HID_DESC
     ajmp    send_descriptor
 00002$:
     cjne    a, #0x22, goto_end
     mov     dptr, #(_usb_hid_desc + _XRAM - _BOOTLOADER_BLOCK + _BLOCK_OFFSET)
     mov     r6, #HID_DESC_SIZE
+.endif
+
 
 send_descriptor:
-; if the report request size > descriptor actual size:
+; if (report requested size) > (descriptor actual size):
 ;    send actual size
 ; else:
 ;    send requested size
@@ -274,8 +291,6 @@ send_descriptor:
     mov     a, r7
 00003$:
     mov     r0, a
-
-finish_transaction:
     acall   _finish_usb_ep0_transaction
 
 goto_end:
@@ -353,7 +368,11 @@ cmd1:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
+.if USE_HID_DESC
     mov     a, #0x40
+.else
+    mov     a, #0x02
+.endif
     movx    @dptr, a
 
 ; cmd2: write a page of flash.
@@ -485,7 +504,11 @@ cmd5:
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
+.if USE_HID_DESC
     mov     a, #0x40
+.else
+    mov     a, #0x01
+.endif
     movx    @dptr, a
     sjmp    00002$
 00001$:
@@ -522,44 +545,32 @@ cmd7:
 
 ; didn't match any of the commands above, or fell through to this branch
 no_command_match:
-
     mov     dptr, #_out1bc
     movx    @dptr, a
-
 
 usb_handling_final:
 
 ; some commands above send a packet with one 0 in them to the host after completing
 _send_usb_zero:
     jnb     BIT_SEND_ZERO, dont_send_zero
-
     mov     dptr, #_in1buf
     clr     a
     movx    @dptr, a
     ; number of bytes to write to ep1in
     mov     dptr, #_in1bc
+.if USE_HID_DESC
     mov     a, #0x40
+.else
+    mov     a, #0x01
+.endif
     movx    @dptr, a
     clr     BIT_SEND_ZERO
 dont_send_zero:
 
-; wait_ep1_out_ready:
-;     mov     dptr, #_out1cs
-;     movx    a, @dptr
-;     anl     a, #0x02
-;     jnz     wait_ep1_out_ready
-
-; wait_ep1_out_ready:
-;     mov     dptr, #_in1cs
-;     movx    a, @dptr
-;     anl     a, #0x02
-;     jnz     wait_ep1_out_ready
-
-
 ; clear interrupt flags
 _clear_flags:
     mov     a, #0x03
-    ; mov     a, #0x03  ; ; datasheet says to use this value
+    ; clear all interrupts
     mov     dptr, #_in_irq  ; _in_irq
     movx    @dptr, a
     inc     dptr            ; _out_irq
@@ -677,7 +688,7 @@ _usb_conf_desc:
     ; configuration descriptor
     .db     #0x09             ; 9       ; bLength
     .db     #0x02             ; 2       ; bDescriptorType
-    .byte   #0x29,#0x00       ; 41      ; wTotalLength
+    .byte   #CONFIG_DESC_SIZE,#0x00  ; 41      ; wTotalLength
     .db     #0x01             ; 1       ; bNumInterfaces
     .db     #0x01             ; 1       ; bConfigurationValue
     .db     #0x00             ; 0       ; iConfiguration
@@ -689,11 +700,11 @@ _usb_conf_desc:
     .db     #0x00             ; 0       ; bInterfaceNumber
     .db     #0x00             ; 0       ; bAlternateSetting
     .db     #0x02             ; 2       ; bNumEndpoints
-    ; .db     #0x00             ; 0       ; bInterfaceClass (vendor)
-    .db     #0x03             ; 0       ; bInterfaceClass (HID)
+    .db     #INTF_CLASS       ; 0       ; bInterfaceClass
     .db     #0x00             ; 0       ; bInterfaceSubClass
     .db     #0x00             ; 0       ; bInterfaceProtocol
     .db     #0x00             ; 0       ; iInterface
+.if USE_HID_DESC
     ; HID descriptor
     .db     #0x09             ; 9       ; bLength
     .db     #0x21             ;         ; bDescriptorType
@@ -702,6 +713,7 @@ _usb_conf_desc:
     .db     #0x01             ;         ; bNumDescriptors
     .db     #0x22             ;         ; bDescriptorType_HID
     .byte   #0x18,#0x00       ; 24      ; wDescriptorLength
+.endif
     ; ep1in descriptor
     .db     #0x07             ; 7       ; bLength
     .db     #0x05             ; 5       ; bDescriptorType
@@ -716,6 +728,7 @@ _usb_conf_desc:
     .db     #0x03             ; 3       ; bmAttributes
     .byte   #0x40,#0x00       ; 64      ; wMaxPacketSize
     .db     #_EP1_INTERVAL    ;         ; bInterval
+.if USE_HID_DESC
 _usb_hid_desc:
     .db #0x06               ; HID_USAGE_PAGE(2), DB16(HID_USAGE_PAGE_VENDOR_START),
     .byte #0x00,#0xff
@@ -740,6 +753,7 @@ _usb_hid_desc:
     .db #0x91               ;     HID_OUTPUT(1), IOF_DATA | IOF_VARIABLE | IOF_ABSOLUTE,
     .db #0x02
     .db #0xc0               ; HID_END_COLLECTION(0),
+.endif
 
 
 
