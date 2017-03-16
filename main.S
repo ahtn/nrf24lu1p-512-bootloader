@@ -205,22 +205,22 @@ _usbInit:
     inc     dptr         ; #_bin1addr    ; dptr = _bin1addr
     movx    @dptr, a
 
-    ; clear usb interrupts
-    clr     _USBIRQ
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                           start main loop                           ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 _start_loop:
 
+    ; clear usb interrupts
+    clr     _USBIRQ
+
     ; wait for USB interrupt
+
+_wait_usb_irq:
 
 .if KICK_WATCHDOG
     acall   _kick_dog
 .endif
-    jnb     _USBIRQ, _start_loop
-
-    clr     _USBIRQ
+    jnb     _USBIRQ, _wait_usb_irq
 
 ; check which interrupt was triggered
 _handle_ivec:
