@@ -159,6 +159,8 @@ _usbInit:
     mov BIT_REG_0_7, a     ; clr bit registers 0x00..0x07
     mov r0, a
 
+    mov     r5, #0x10  ; 2 bytes, 1 cycles
+00003$:
     ; delay for ~12ms @ 16MHz
     ; ((((256 * 3) + 1) * 256)+1) / 16000000 = .01230406
     mov     r6, a      ; 1 bytes, 1 cycles
@@ -167,6 +169,7 @@ _usbInit:
 00001$:
     djnz    r7, 00001$ ; 3 bytes, 3 cycles
     djnz    r6, 00002$ ; 3 bytes, 3 cycles
+    djnz    r5, 00003$ ; 3 bytes, 3 cycles
 
     ; reconnect the usb device
     ; clr     a ;
