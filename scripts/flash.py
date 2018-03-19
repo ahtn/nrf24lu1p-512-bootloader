@@ -1,4 +1,7 @@
 #!/bin/env python
+
+from __future__ import absolute_import, division, print_function, unicode_literals
+
 import usb.core
 import usb.util
 import time
@@ -6,8 +9,11 @@ import bootloader
 import sys
 import intelhex
 
-ID_VENDOR = 0x1915
-ID_PRODUCT = 0x0101
+FACTORY_ID_VENDOR = 0x1915
+FACTORY_ID_PRODUCT = 0x0101
+
+KEYPLUS_ID_VENDOR = 0x1209
+KEYPLUS_ID_PRODUCT = 0xBB03
 
 # TODO: rewrite this with argparse #
 # TODO: use the fact that we know endpoint values to clean this up #
@@ -16,7 +22,14 @@ debug = True
 
 # def usb_setup():
 # dev = usb.core.find()
-dev = usb.core.find(idVendor=ID_VENDOR, idProduct=ID_PRODUCT)
+dev = usb.core.find(idVendor=FACTORY_ID_VENDOR, idProduct=FACTORY_ID_PRODUCT)
+
+if dev == None:
+    dev = usb.core.find(idVendor=KEYPLUS_ID_VENDOR, idProduct=KEYPLUS_ID_PRODUCT)
+
+if dev == None:
+    print("Couldn't find a device to program", file=sys.stderr)
+    exit(1)
 
 intf_num = 0
 

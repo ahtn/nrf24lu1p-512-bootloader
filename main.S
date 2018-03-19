@@ -23,7 +23,7 @@
 ; 1 -> last page of 16kb flash
 ; 0 -> last page of 32kb flash
 ; BOOTLOADER_BLOCK_CUSTOM can alternatively be used to store it in a custom page.
-FLASH_SIZE_16 = 1
+FLASH_SIZE_16 = 0
 ; BOOTLOADER_BLOCK_CUSTOM   = 0x6600 ; should be divisible by page size (0x200)
 
 ; If set, this will prevent read back of the flash when the RDIS bit is configured
